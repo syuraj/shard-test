@@ -1,0 +1,133 @@
+aws:
+  credentialsFile: /secrets/serviceaccount/credentials
+  region: us-west-2
+
+cluster: # See https://salesforce.quip.com/BDw6AZkQSyaY for environment mappings
+  id: dev10
+  number: "10"
+  subDomain: us-10-dev
+
+configMap:
+  # Where the config map should be mounted inside the container's filesystem.
+  mountPath: /home/webservices/boot
+
+environment: prod
+environmentType: prod
+
+fkpExternalDnsDomainName: sam-restricted1.sam.cdp001.dev1-uswest2.aws.sfdc.is
+
+hazelcast:
+  diag: false
+  k8sDiscovery: false
+  processingHZHosts: "10.17.176.130" # TODO: automate this somehow
+
+image:
+  repository: 331455399823.dkr.ecr.us-west-2.amazonaws.com/sfci/hypergage/evergage-product/shardlocal
+  tag: 163
+  pullPolicy: Always
+
+java:
+  home: /opt/evergage/graal-ce/bin/java
+  gcLogFileSize: 10M
+  logbackConfig: /opt/evergage/shardlocal/conf/logback.xml
+  minMemory: 512m
+  maxMemory: 512m
+  rmiPort: 3031
+  rmiServer: localhost
+  tmpDir: /tmp
+  remoteDebug: false
+  remoteDebugPort: 5005
+
+jmxremote:
+  authenticate: false
+  port: 8086
+  ssl: false
+
+logback:
+  lines: []
+
+# The maximum number of pods from that set that can be unavailable at once
+maxUnavailable: 1
+
+mongo:
+  mongodbName: mdb-shard
+  mongoSrvDomainName: dev.srv-dev.sfdc.is
+  srvUrl: mdb-mongos-0.mongos.mcis.svc.cluster.local # set in FKP
+  replicaCount: 1
+  numShards: 1
+  port: 27017
+  tls:
+    enabled: true
+    generateCerts: true
+    localDevCertsPath: /Users/myLocalMachineUser/Certs/CAs # You must update mylocaldesktop_user
+    podCertsPath: /tmp/certificates
+    certificates:
+      caFile: /tmp/certificates/cacerts.pem
+      keyFile: /tmp/certificates/shardlocal_key.pem
+      clientKeyFile: /tmp/certificates/clientKeyFile.pem
+
+# Falcon mandatory tags.
+platform_labels: {}
+
+# Port settings
+ports:
+  - name: hz-mongo
+    port: 5903
+    targetPort: 5903
+
+probes:
+  shardlocal:
+    livenessProbe:
+      tcpSocket:
+        port: 5903
+      initialDelaySeconds: 60
+      periodSeconds: 15
+    readinessProbe:
+      tcpSocket:
+        port: 5903
+      initialDelaySeconds: 60
+      periodSeconds: 15
+
+# Resource settings (use Kubernetes syntax)
+resources:
+  shardlocal:
+    requests:
+      memory: 2Gi
+      cpu: 2
+    limits:
+      memory: 3Gi
+      cpu: 3
+
+# The initial number of pod replicas to run for your service
+replicaCount: 1
+
+# Falcon uses the service account name as a component of the service's security
+# identity. Set create to false to use an previously created service account.
+serviceAccount:
+  name: default
+  create: false
+
+shardlocal:
+  log_path: /opt/evergage/shardlocal/logs
+  storage_size: 2Gi
+  terminationGracePeriodSeconds: 10
+
+# The overall system your service is a part of
+system: mcis
+# The name of your service
+service: shardlocal
+# The major version number for your service
+version: 1
+# NEED improvements:
+# shardlocal has several input parameters that we do not have details yet.
+# Once the improvements are complete, all values and variables of shardlocal
+# need updates.
+#
+# 1. Note that Evergage team has a workflow(W-8306854) to automatically find the primary server.
+#    To bring the shardlocal process as a test, we are pointing to mdb-mongos-0.
+# 2. We need to better populate hazelcast hosts
+# 3. Increase java max/min memory to 24000m in production environment
+# 4. Mutual TLS /etc/pki/tls/certs/rds-combined-ca-bundle.pem
+# 5. Review the use of JMX agent
+# 6. Replace Event & Core mongo hosts
+#

@@ -1,0 +1,109 @@
+{{- range $shardnum := until ($.Values.mongo.numShards | int) }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ (print $.Values.service $shardnum) | quote }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: {{ $.Values.service | quote }}
+    app.kubernetes.io/part-of: {{ $.Values.service | quote }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+{{- range $label_name, $label_value := $.Values.platform_labels }}
+    {{ $label_name }}: {{ $label_value }}
+{{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ (print $.Values.service $shardnum) | quote }}
+  serviceName: {{ (print $.Values.service $shardnum) | quote }}
+  replicas: {{ $.Values.replicaCount }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: {{ $.Values.service | quote }}
+        app.kubernetes.io/part-of: {{ $.Values.service | quote }}
+        app: {{ (print $.Values.service $shardnum) | quote }}
+{{- range $label_name, $label_value := $.Values.platform_labels }}
+        {{ $label_name }}: {{ $label_value }}
+{{- end }}
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name | lower }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 7447
+        runAsGroup: 7447
+        fsGroup: 7447
+      terminationGracePeriodSeconds: {{ $.Values.shardlocal.terminationGracePeriodSeconds }}
+      volumes:
+        - name: {{ (print $.Values.service "-config") | quote }}
+          configMap:
+            name: {{ (print $.Values.service $shardnum) | quote }}
+{{- if $.Values.localDev }}
+        - name: localstack-aws-credentials
+          configMap:
+            name: localstack-aws-credentials
+        - name: local-certs
+          hostPath:
+            path: {{ $.Values.mongo.tls.localDevCertsPath }}
+{{- end }}
+      containers:
+      - name: shardlocal
+        image: {{ $.Values.image.repository }}:{{ $.Values.image.tag }}
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        command:
+          - bash
+          - "-c"
+          - |
+{{- if and ($.Values.mongo.tls.generateCerts) (not $.Values.localDev) }}
+            mkdir -p $(dirname {{- $.Values.mongo.tls.certificates.clientKeyFile }})
+
+            # get the leaf certificate and put it in a Certificate Key file
+            openssl x509 -in /etc/identity/client/certificates/client.pem > {{- $.Values.mongo.tls.certificates.clientKeyFile }}
+            # append the certificate's key
+            cat /etc/identity/client/keys/client-key.pem >> {{- $.Values.mongo.tls.certificates.clientKeyFile }}
+
+            # copy the cert chain into a new CA file
+            cat /etc/identity/client/certificates/client.pem > {{- $.Values.mongo.tls.certificates.caFile }}
+            # remove the leaf cert so only intermediate certs remain
+            IFS=$'\n'; for l in $(openssl x509 -in /etc/identity/client/certificates/client.pem); do sed -i "0,\|$l|d" {{- $.Values.mongo.tls.certificates.caFile }}; done
+            echo "" >> {{- $.Values.mongo.tls.certificates.caFile }}
+            # add all cacerts to the intermediate certs
+            cat /etc/pki_service/ca/cacerts.pem >> {{- $.Values.mongo.tls.certificates.caFile }}
+{{- end }}
+            /home/webservices/booty /home/webservices/boot/shardlocal-bootstrap.yaml
+        env:
+          - name: AWS_SHARED_CREDENTIALS_FILE
+            value: {{ $.Values.aws.credentialsFile }}
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - all
+        ports:
+{{- range $.Values.ports }}
+        - name: {{ .name | quote }}
+          containerPort: {{ .targetPort }}
+          protocol: TCP
+{{- end }}
+        volumeMounts:
+        - name: {{ (print $.Values.service "-config") | quote }}
+          mountPath: {{ $.Values.configMap.mountPath | quote }}
+{{- if $.Values.localDev }}
+        - name: "localstack-aws-credentials"
+          mountPath: "/secrets/serviceaccount"
+        - name: local-certs
+          mountPath: {{ $.Values.mongo.tls.podCertsPath }}
+{{- end }}
+        resources:
+{{ toYaml $.Values.resources.shardlocal | indent 10 }}
+{{ toYaml $.Values.probes.shardlocal | indent 8 }}
+---
+{{- end }}
